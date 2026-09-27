@@ -95,11 +95,11 @@ out_size = None
 color_mode = "gray"
 
 # ---- 墨线提取 --------------------------------------------------------------
-#   "canny"    = 只抓真实边缘。照片类内容用这个：水面/天空的平滑渐变不受影响
-#                （实测黑像素占比 3.8%）
-#   "adaptive" = 自适应阈值。会把平滑渐变整片转成网点，自带网点感，容易糊
-#                （实测黑像素占比 49.7%）
-line_method = "canny"
+#   "adaptive" = 自适应阈值（默认）。密度阈值法，会把平滑渐变整片转成网点，
+#                线条密集、自带网点质感（实测黑像素占比约 45%）。照片类内容用这个。
+#   "canny"    = 只抓真实边缘，线条稀疏干净（实测黑像素占比约 2.9%）。
+#                想要"少而准"的线稿、或者内容本身就是线稿时用。
+line_method = "adaptive"
 line_median = 5          # canny 前的中值滤波核（奇数）；0 = 不滤波，越大越干净
 line_lo = 60             # Canny 低阈值
 line_hi = 160            # Canny 高阈值
@@ -109,6 +109,18 @@ line_thickness = None    # 想按图宽自动定线宽就填比例，如 0.0015�
 line_block = 15
 line_c = 8
 line_alpha = 1.0         # 墨线强度 0~1
+
+# ---- 线条连续性：闭运算接断口 ----------------------------------------------
+# 阈值会把弱笔画切断，线就碎成一段段。闭运算（先膨胀再腐蚀）能补上小间隙，
+# 而且几乎不改变线条粗细。
+# 实测（同一张图）：
+#   关闭      连通块 6906  线条占比 37.32%
+#   line_close=3   2098               40.47%   <- 块数降到 1/3.3，密度只涨 3%
+#   line_close=5    723               46.89%
+#   line_close=7    262               56.31%   <- 开始把纹理并成大块
+line_close = 3           # 闭运算核大小（奇数）；0 = 关闭。推荐 3，越大接得越多也越糊
+# 接断口之前先去掉小于这个面积的孤立黑点（碎点接上去只会更乱）；0 = 不去
+line_despeckle = 0       # 推荐 15~25；0 = 不去碎点
 
 # ---- 底色：提亮 + 压平对比 + 抬暗部下限 -------------------------------------
 # 漫画底色 = 大面积留白，所以要把照片的明暗压成几个淡灰级别
@@ -175,6 +187,35 @@ def extract_lineart(pil_gray, method="canny", median=5, lo=60, hi=160,
     if dilate:
         out = out.filter(ImageFilter.MinFilter(2 * int(dilate) + 1))
     return out
+
+
+def despeckle_lines(lines, min_area=15):
+    """去掉小于 min_area 的孤立黑点（水面碎噪点）。这些点接上去只会让画面更乱。"""
+    if min_area <= 0:
+        return lines
+    inv = (np.asarray(lines) < 128).astype(np.uint8)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(inv, connectivity=8)
+    if n <= 1:
+        return lines
+    keep = np.zeros_like(inv)
+    for i in range(1, n):
+        if st[i, cv2.CC_STAT_AREA] >= min_area:
+            keep[lab == i] = 1
+    return Image.fromarray(np.where(keep, 0, 255).astype(np.uint8), "L")
+
+
+def close_line_gaps(lines, ksize=3):
+    """闭运算接断口：先膨胀再腐蚀，补上小间隙而几乎不加粗线条。
+
+    极性注意：这里的线是黑色的（0），底色是白的（255），
+    形态学要在"线=255"的图上做，所以先反相再还原。
+    """
+    if not ksize or ksize < 3:
+        return lines
+    arr = 255 - np.asarray(lines, dtype=np.uint8)          # 线 -> 255
+    ker = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize | 1, ksize | 1))
+    arr = cv2.morphologyEx(arr, cv2.MORPH_CLOSE, ker)
+    return Image.fromarray(255 - arr, "L")                 # 还原成 白底黑线
 
 
 def whiten(pil_gray, gamma=2.6, gain=1.35, flatten=0.55, floor=0.72):
@@ -250,8 +291,19 @@ def main():
     lines = extract_lineart(content_rgb.convert("L"), method=line_method,
                             median=line_median, lo=line_lo, hi=line_hi,
                             dilate=dilate, block=line_block, c=line_c)
+
+    # 线条连续性增强：先去掉孤立碎点，再用闭运算把断口接起来
+    raw_ratio = (np.asarray(lines) < 128).mean() * 100
+    if line_despeckle:
+        lines = despeckle_lines(lines, line_despeckle)
+    if line_close:
+        if cv2 is None:
+            print("[warn] 没装 opencv，无法做线条连续性增强（line_close 被忽略）")
+        else:
+            lines = close_line_gaps(lines, line_close)
     dark_ratio = (np.asarray(lines) < 128).mean() * 100
-    print("墨线      : {} 方式，黑像素占比 {:.2f}%".format(line_method, dark_ratio))
+    print("墨线      : {} 方式，黑像素占比 {:.2f}% -> 连续性增强后 {:.2f}%"
+          .format(line_method, raw_ratio, dark_ratio))
 
     # 底色：直接用内容图的明暗，压平提亮
     base = content_rgb.convert("L")
