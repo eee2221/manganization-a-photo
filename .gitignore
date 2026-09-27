@@ -1,0 +1,29 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ---- 运行产物 ----
+# 每次训练生成 <内容图名><run_tag>/ 文件夹，里面是 结果.png / 对比.png / 输入.png
+# 默认 run_tag 是 "_lines_v2"，所以把常见形态都挡掉。
+# 换了自己的 run_tag 就按同样规则往下加一条。
+content_*/
+*_lines_v2/
+*_lines_*/
+*_manga_*/
+snapshots*/
+*/snapshots/
+
+# ---- 私人素材 / 备份（绝不上传） ----
+*.heif
+*.heic
+
+# ---- 编辑器 / 系统 ----
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini
