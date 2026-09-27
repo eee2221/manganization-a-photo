@@ -50,7 +50,6 @@ python manga_filter.py
 ```python
 color_mode     = "gray"       # "gray" 灰阶；"content" 保留原图颜色（彩色线稿）
 line_method    = "adaptive"   # 提线方式，见下表
-line_smooth    = 9            # 提线前保边平滑（双边滤波），治"暗部丢细节"，0=不平滑
 line_median    = 5            # canny 前的中值滤波核，压细纹
 line_lo / hi   = 60 / 160     # canny 双阈值
 line_dilate    = 1            # 线宽
